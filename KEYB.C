@@ -1,3 +1,4 @@
+#include <mem.h>
 #include <dos.h>
 #include "keyb.h"
 

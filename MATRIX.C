@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <dos.h>
 
 #include "keyb.h"
@@ -28,6 +29,30 @@ void putGVal(unsigned char g) {
 	outp(0x03c9, 0x00);
 }
 
+int has_vga_dac(void) {
+    union REGS regs;
+    regs.x.ax = 0x1A00;
+    int86(VIDEO_INT, &regs, &regs);
+    return regs.h.al == 0x1A;
+}
+
+int has_ega_palette(void) {
+    union REGS regs;
+    regs.h.ah = 0x12;
+    regs.h.bl = 0x10;
+    int86(VIDEO_INT, &regs, &regs);
+    return regs.h.bl != 0x10;
+}
+
+void set_ega_palette_reg(byte reg, byte color6) {
+    union REGS regs;
+    regs.h.ah = 0x10;
+    regs.h.al = 0x00;
+    regs.h.bl = reg;
+    regs.h.bh = color6 & 0x3F;
+    int86(VIDEO_INT, &regs, &regs);
+}
+
 void set_mode(byte mode)
 {
     union REGS regs;
@@ -38,8 +63,21 @@ void set_mode(byte mode)
 
 /* set up a 16-shade greenscale palette */
 void green_palette() {
+    static const byte ega_green_ramp[16] = {
+        0x00, 0x02, 0x02, 0x02, 0x0A, 0x0A, 0x0A, 0x1A,
+        0x1A, 0x2A, 0x2A, 0x12, 0x12, 0x3A, 0x3A, 0x3F
+    };
     unsigned char g, gstep;
     int i;
+
+    /* EGA-only remap */
+    if(!has_vga_dac() && has_ega_palette()) {
+        for(i = 0; i < 16; i++) {
+            set_ega_palette_reg((byte)i, ega_green_ramp[i]);
+        }
+        return;
+    }
+
     outp(0x03c8, 0);
 
     g = 0x00;
