@@ -17,6 +17,7 @@
 #define VRETRACE 0x08
 
 typedef unsigned char byte;
+static unsigned int g_rng = 0xA5A5u;
 
 void wait_retrace() {
     while ((inp(INPUT_STATUS_1) & VRETRACE));
@@ -107,48 +108,68 @@ int is_whitespace(char c) {
 	return ((c == 0) || (c == 32) || (c == 255));
 }
 
+byte fast_rand8() {
+	/* 16-bit LCG: cheap and 808x-friendly */
+	g_rng = (unsigned int)(g_rng * 25173u + 13849u);
+	return (byte)(g_rng >> 8);
+}
+
 char rnd_printable() {
-	char rndchr = (((char) rand()) % 253) + 1;
-	if(rndchr >= 32){
-		rndchr++;
-	}
-	return rndchr;
+	byte r;
+	do {
+		r = fast_rand8();
+	} while((r == 0) || (r == 255) || (r == 32));
+	return (char)r;
 }
 
 void step(int spawn) {
 	int row, col;
+	unsigned int spawn_threshold;
+	char far *rowp;
+	char far *abovep;
 	unsigned char currentColor;
 	unsigned char aboveColor;
 	unsigned char aboveChar;
+
+	/* Map 0..99 spawn to 0..255 threshold once per frame. */
+	spawn_threshold = ((unsigned int)spawn * 256u + 99u) / 100u;
+
 	/* Fade every cell's color by 1 */
+	rowp = txtmem;
 	for(row = 0; row < 25; row++) {
 	 for(col = 0; col < 80; col++) {
-		currentColor = 0x0F & colorat(col, row);
+		currentColor = 0x0F & rowp[1];
 		if(currentColor > 0) {
-			colorat(col, row) = currentColor - 1;
+			rowp[1] = (char)(currentColor - 1);
 		}
+		rowp += 2;
 	 }
 	}
 	/* continue the motion of any cell that was maximally bright last frame */
+	rowp = txtmem + 160;
+	abovep = txtmem;
 	for(row = 1; row < 25; row++) {
 	 for(col = 0; col < 80; col++) {
-		currentColor = 0x0F & colorat(col, row);
-		aboveColor = 0x0F & colorat(col, row-1);
-		aboveChar = charat(col, row-1);
+		currentColor = 0x0F & rowp[1];
+		aboveColor = 0x0F & abovep[1];
+		aboveChar = abovep[0];
 		if((aboveColor == 0x0E) && !is_whitespace(aboveChar)) {
-			colorat(col, row) = 0x0F;
-			charat(col, row) = rnd_printable();
+			rowp[1] = 0x0F;
+			rowp[0] = rnd_printable();
 		}
+		rowp += 2;
+		abovep += 2;
 	 }
 	}
 	/* start new trails at some of the fully darkend top row cells */
-	row = 0;
+	rowp = txtmem;
 	for(col = 0; col < 80; col++) {
-		currentColor = colorat(col, row);
-		if(currentColor == 0 && ((rand() % 100) >= spawn)) {
-			colorat(col, row) = 0x0F;
-			charat(col, row) = rnd_printable();
+		currentColor = rowp[1];
+		if((currentColor == 0) && (fast_rand8() >= spawn_threshold)) {
+			rowp[1] = 0x0F;
+			rowp[0] = rnd_printable();
 		}
+		rowp += 2;
 	}
 }
 
