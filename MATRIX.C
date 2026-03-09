@@ -18,6 +18,8 @@
 
 typedef unsigned char byte;
 static unsigned int g_rng = 0xA5A5u;
+static byte g_col_active[80];
+static signed char g_col_head[80];
 
 void wait_retrace() {
     while ((inp(INPUT_STATUS_1) & VRETRACE));
@@ -122,54 +124,77 @@ char rnd_printable() {
 	return (char)r;
 }
 
+void init_stream_state() {
+	int col;
+	for(col = 0; col < 80; col++) {
+		g_col_active[col] = 1;
+		g_col_head[col] = -1;
+	}
+}
+
 void step(int spawn) {
 	int row, col;
 	unsigned int spawn_threshold;
-	char far *rowp;
-	char far *abovep;
+	char far *col_base;
+	char far *ptr;
+	signed char head;
 	unsigned char currentColor;
-	unsigned char aboveColor;
-	unsigned char aboveChar;
+	byte col_has_light;
 
 	/* Map 0..99 spawn to 0..255 threshold once per frame. */
 	spawn_threshold = ((unsigned int)spawn * 256u + 99u) / 100u;
 
-	/* Fade every cell's color by 1 */
-	rowp = txtmem;
-	for(row = 0; row < 25; row++) {
-	 for(col = 0; col < 80; col++) {
-		currentColor = 0x0F & rowp[1];
-		if(currentColor > 0) {
-			rowp[1] = (char)(currentColor - 1);
-		}
-		rowp += 2;
-	 }
-	}
-	/* continue the motion of any cell that was maximally bright last frame */
-	rowp = txtmem + 160;
-	abovep = txtmem;
-	for(row = 1; row < 25; row++) {
-	 for(col = 0; col < 80; col++) {
-		currentColor = 0x0F & rowp[1];
-		aboveColor = 0x0F & abovep[1];
-		aboveChar = abovep[0];
-		if((aboveColor == 0x0E) && !is_whitespace(aboveChar)) {
-			rowp[1] = 0x0F;
-			rowp[0] = rnd_printable();
-		}
-		rowp += 2;
-		abovep += 2;
-	 }
-	}
-	/* start new trails at some of the fully darkend top row cells */
-	rowp = txtmem;
 	for(col = 0; col < 80; col++) {
-		currentColor = rowp[1];
-		if((currentColor == 0) && (fast_rand8() >= spawn_threshold)) {
-			rowp[1] = 0x0F;
-			rowp[0] = rnd_printable();
+		col_base = txtmem + (col << 1);
+		head = g_col_head[col];
+		col_has_light = 0;
+
+		/* Cold columns only need a top-row spawn check. */
+		if(!g_col_active[col]) {
+			if(((col_base[1] & 0x0F) == 0) && (fast_rand8() >= spawn_threshold)) {
+				col_base[1] = 0x0F;
+				col_base[0] = rnd_printable();
+				g_col_head[col] = 0;
+				g_col_active[col] = 1;
+			}
+			continue;
 		}
-		rowp += 2;
+
+		/* Fade this column. */
+		ptr = col_base + 1;
+		for(row = 0; row < 25; row++) {
+			currentColor = 0x0F & ptr[0];
+			if(currentColor > 0) {
+				ptr[0] = (char)(currentColor - 1);
+				if(currentColor > 1) {
+					col_has_light = 1;
+				}
+			}
+			ptr += 160;
+		}
+
+		/* Move the head down one row when the previous glyph is non-whitespace. */
+		if(head >= 0) {
+			if((head < 24) && !is_whitespace(col_base[(head * 160)])) {
+				head++;
+				col_base[(head * 160) + 1] = 0x0F;
+				col_base[(head * 160)] = rnd_printable();
+				col_has_light = 1;
+			} else {
+				head = -1;
+			}
+		}
+
+		/* Spawn from top when dark, same threshold logic as before. */
+		if(((col_base[1] & 0x0F) == 0) && (fast_rand8() >= spawn_threshold)) {
+			col_base[1] = 0x0F;
+			col_base[0] = rnd_printable();
+			head = 0;
+			col_has_light = 1;
+		}
+
+		g_col_head[col] = head;
+		g_col_active[col] = (byte)((head >= 0) || col_has_light);
 	}
 }
 
@@ -183,6 +208,7 @@ int main(int argc, char** argv) {
 	green_palette();
 	paint_box(0,0,80,25,0x0F);
 	paint_box(0,0,80,1, 0x00);
+	init_stream_state();
 	while(!test_keybuf(keybuf, KEY_ESC)) {
 		step(95);
 		/* as it turns out, 60Hz is ludicrously fast for this effect */
