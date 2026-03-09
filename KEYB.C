@@ -15,10 +15,10 @@ IRET.*/
 static void interrupt (far *oldkb)(void);   /* BIOS keyboard handler */
 
 /* Q code  */
-BYTE gb_scan;
-BYTE gb_scan_q[NUM_SCAN_QUE];
-BYTE gb_scan_head;
-BYTE gb_scan_tail;
+volatile BYTE gb_scan;
+volatile BYTE gb_scan_q[NUM_SCAN_QUE];
+volatile BYTE gb_scan_head;
+volatile BYTE gb_scan_tail;
 
 /*
    invoked by the hardware keyboard interupt
@@ -45,8 +45,6 @@ void interrupt get_scan(void)
    asm      out   020h, al
 
          /* end of re-set code */
-
-   asm      sti
 
 /*save the raw scan code in a 256 byte buffer*/
    *(gb_scan_q+gb_scan_tail)=gb_scan;
@@ -118,7 +116,6 @@ int update_keystates(int keystates, int* key_map, int key_map_size) {
 
 void get_keys_hit(char *keybuf) {
    BYTE key_event, was_released;
-   int i;
    while ( gb_scan_head != gb_scan_tail )
       {
          key_event = gb_scan_q[gb_scan_head];
@@ -128,9 +125,6 @@ void get_keys_hit(char *keybuf) {
 
          if(!was_released)
             keybuf[key_event >> 3] |= 1 << (key_event & 7);
-         else {
-            keybuf[key_event >> 3] &= ~(1 << (key_event & 7));
-         }
 
          gb_scan_head++;
       
