@@ -58,23 +58,17 @@ save the old int9 ISR vector, and install our own
 /* ---------------------- init_keyboard() ---------------- April 17,1993 */
 void init_keyboard(void)
 {
-   BYTE far *bios_key_state;
-
    /* save old BIOS key board handler */
    oldkb=getvect(9);
-
-   /*turn off num-lock via BIOS*/ 
-   bios_key_state=MK_FP(0x040, 0x017);
-   *bios_key_state&=(~(32 | 64));     /* toggle off caps lock and
-                                        num lock bits in the BIOS variable*/
-   oldkb();      /*call BIOS key handler to change keyboard lights*/
 
    gb_scan_head=0;
    gb_scan_tail=0;
    gb_scan=0;
 
    /* install our own handler */
+   disable();
    setvect(9, get_scan);
+   enable();
 
 }
 
@@ -82,7 +76,9 @@ void init_keyboard(void)
 /* ---------------------- deinit_keyboard() -------------- April 17,1993 */
 void deinit_keyboard(void)
 {
+   disable();
    setvect(9, oldkb);
+   enable();
 }
 
 int update_keystates(int keystates, int* key_map, int key_map_size) {
