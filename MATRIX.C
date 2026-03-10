@@ -32,19 +32,39 @@ void putGVal(unsigned char g) {
 	outp(0x03c9, 0x00);
 }
 
-int has_vga_dac(void) {
-    union REGS regs;
-    regs.x.ax = 0x1A00;
-    int86(VIDEO_INT, &regs, &regs);
-    return regs.h.al == 0x1A;
-}
+enum {
+    VIDEO_CAP_MDA = 0x01,
+    VIDEO_CAP_EGA = 0x02,
+    VIDEO_CAP_VGA = 0x04
+};
 
-int has_ega_palette(void) {
+unsigned char get_video_caps(void) {
     union REGS regs;
+    unsigned char caps = 0;
+
+    /* MDA text mode is 7. */
+    regs.h.ah = 0x0F;
+    int86(0x10, &regs, &regs);
+    if(((unsigned char)regs.h.al) == 0x07u) {
+        caps |= VIDEO_CAP_MDA;
+    }
+
+    /* EGA/VGA palette register support. */
     regs.h.ah = 0x12;
     regs.h.bl = 0x10;
     int86(VIDEO_INT, &regs, &regs);
-    return regs.h.bl != 0x10;
+    if(regs.h.bl != 0x10) {
+        caps |= VIDEO_CAP_EGA;
+    }
+
+    /* VGA/MCGA DAC support. */
+    regs.x.ax = 0x1A00;
+    int86(VIDEO_INT, &regs, &regs);
+    if(regs.h.al == 0x1A) {
+        caps |= VIDEO_CAP_VGA;
+    }
+
+    return caps;
 }
 
 void set_ega_palette_reg(byte reg, byte color6) {
@@ -72,9 +92,10 @@ void green_palette() {
     };
     unsigned char g, gstep;
     int i;
-
+    unsigned char caps;
     /* EGA-only remap */
-    if(!has_vga_dac() && has_ega_palette()) {
+    caps = get_video_caps();
+    if(!(caps & VIDEO_CAP_VGA) && (caps & VIDEO_CAP_EGA)) {
         for(i = 0; i < 16; i++) {
             set_ega_palette_reg((byte)i, ega_green_ramp[i]);
         }
@@ -201,6 +222,11 @@ void step(int spawn) {
 int main(int argc, char** argv) {
 	char keybuf[32];
 	int i;
+	/* Quick MDA check */
+	if (get_video_caps() & VIDEO_CAP_MDA) {
+	printf("This program requires CGA or higher.\r\n");
+	return 1;
+	}
 	init_keyboard();
 	clear_keybuf(keybuf);
 	/* make sure we are in text mode */
