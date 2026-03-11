@@ -16,6 +16,16 @@
 #define INPUT_STATUS_1 0x03da
 #define VRETRACE 0x08
 
+#define FONTX2_HDR_SIZE 17
+
+typedef struct {
+    unsigned width;
+    unsigned height;
+    unsigned type;
+    size_t glyphbytes;
+    unsigned char *rawdata;
+} fontx2_file;
+
 typedef unsigned char byte;
 static unsigned int g_rng = 0xA5A5u;
 static byte g_col_active[80];
@@ -219,15 +229,127 @@ void step(int spawn) {
 	}
 }
 
+static int check_fontx2_header(FILE *fp, fontx2_file *font, int required_height) {
+    unsigned char hdr[FONTX2_HDR_SIZE];
+    if (fread(hdr, 1, FONTX2_HDR_SIZE, fp) != FONTX2_HDR_SIZE) {
+        printf("Not a .TLF font!\r\n");
+        return 0;
+    }
+    if (memcmp(hdr, "FONTX2", 6) != 0) {
+        printf("Not a .TLF font!\r\n");
+        return 0;
+    }
+    font->width = hdr[14];
+    font->height = hdr[15];
+    font->type = hdr[16];
+    font->glyphbytes = font->width * font->height / 8;
+
+    if (font->type != 0) {
+        printf("Not a single-byte FONTX2!\r\n");
+        return 0;
+    }
+    if (font->width != 8 || font->height != required_height) {
+        printf("Wrong font width or height: got %u x %u, need 8x%d\r\n",
+            font->width, font->height, required_height);
+        return 0;
+    }
+    return 1;
+}
+
+static int fontx2_glyph_index(unsigned codepoint) {
+    unsigned row = (codepoint >> 8) & 0xFF;
+    unsigned cell = codepoint & 0xFF;
+    if (row < 0x21 || row > 0x7E || cell < 0x21 || cell > 0x7E)
+        return -1;
+    return (row - 0x21) * 94 + (cell - 0x21);
+}
+
+static int check_fontx2_codepoint_coverage(FILE *fp, fontx2_file *font) {
+    long filesize;
+    size_t need_bytes;
+
+    fseek(fp, 0, SEEK_END);
+    filesize = ftell(fp);
+
+    need_bytes = (0xDD + 1) * font->glyphbytes;
+    if (filesize < FONTX2_HDR_SIZE + need_bytes) {
+        printf("Half-width kana not found!\r\n");
+        fflush(stdout);
+        return 0;
+    }
+
+    return 1;
+}
+
+static int validate_and_load_tlf(const char *filename, unsigned char video_caps, fontx2_file *font)
+{
+    int required_height = 0;
+    FILE *fp = NULL;
+    size_t total_bytes = 0;
+
+    /* Determine required_height */
+    if ((video_caps & 0x04) != 0) { /* VIDEO_CAP_VGA */
+        required_height = 16;
+    } else if ((video_caps & 0x02) != 0) { /* VIDEO_CAP_EGA */
+        required_height = 14;
+    } else {
+        printf("CGA do not support custom fonts!\r\n");
+        return 0;
+    }
+
+    fp = fopen(filename, "rb");
+    if (!fp) {
+        printf("Not a .TLF font!\r\n");
+        return 0;
+    } else if (!check_fontx2_header(fp, font, required_height)) {
+        fclose(fp);
+		printf("Wrong font height!\r\n");
+        return 0;
+    }
+	
+    if (!check_fontx2_codepoint_coverage(fp, font)) {
+        fclose(fp);
+        return 0;
+    }
+	
+    total_bytes = 256 * font->glyphbytes;
+    font->rawdata = (unsigned char*)malloc(total_bytes);
+    if (!font->rawdata) {
+        printf("No usable bitmap found!\r\n");
+        fclose(fp);
+        return 0;
+    }
+    fseek(fp, FONTX2_HDR_SIZE, SEEK_SET);
+    if (fread(font->rawdata, 1, total_bytes, fp) != total_bytes) {
+        printf("No usable bitmap loaded!\r\n");
+        fclose(fp);
+        free(font->rawdata);
+        return 0;
+    }
+    fclose(fp);
+	fflush(stdout);
+    return 1;
+}
+
 int main(int argc, char** argv) {
 	char keybuf[32];
 	int i;
+    fontx2_file extfont;
 	/* Quick MDA check */
-	if (get_video_caps() & VIDEO_CAP_MDA) {
-	printf("This program requires CGA or higher.\r\n");
-	return 1;
-	}
-	init_keyboard();
+    unsigned char caps = get_video_caps();
+
+    if (caps & VIDEO_CAP_MDA) {
+        printf("This program requires CGA or higher.\r\n");
+        return 1;
+    }
+
+    if (argc > 1) {
+        if (!validate_and_load_tlf(argv[1], caps, &extfont)) {
+            return 1;
+        }
+        /* Installation/restore code goes here if needed */
+    }
+    init_keyboard();
 	clear_keybuf(keybuf);
 	/* make sure we are in text mode */
 	set_mode(VGA_TEXT_MODE);
