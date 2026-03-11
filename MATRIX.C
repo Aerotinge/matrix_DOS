@@ -17,7 +17,7 @@
 #define VRETRACE 0x08
 
 typedef unsigned char byte;
-static unsigned int g_rng = 0xA5A5u;
+static unsigned int g_rng;
 static byte g_col_active[80];
 static signed char g_col_head[80];
 
@@ -234,6 +234,7 @@ int main(int argc, char** argv) {
 	green_palette();
 	paint_box(0,0,80,25,0x0F);
 	paint_box(0,0,80,1, 0x00);
+	g_rng = peek(0x0040, 0x006C);
 	init_stream_state();
 	while(!test_keybuf(keybuf, KEY_ESC)) {
 		step(95);
